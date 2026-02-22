@@ -12,7 +12,7 @@ class ImageSorterApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("Ollama Image Sorter Pro")
+        self.title("AI_image_classifier")
         self.geometry("800x750")
 
         self.target_dir = ""
@@ -230,4 +230,5 @@ class ImageSorterApp(ctk.CTk):
 
 if __name__ == "__main__":
     app = ImageSorterApp()
+
     app.mainloop()
