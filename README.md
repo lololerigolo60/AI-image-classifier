@@ -34,7 +34,7 @@ Located under the "Tri Automatique" (Automatic Sorting) tab.
 
 🔍 3. Semantic Search & Thumbnails
 
-Located under the "Recherche & Miniatures" tab. This feature allows you to find images by describing them, even if the filename is irrelevant.
+Located under the "Recherche par mots clés" (search with keywords) tab. This feature allows you to find images by describing them, even if the filename is irrelevant.
 Step 1: Indexing (Mandatory for first use)
 
 Before searching, you must click "Indexer".
