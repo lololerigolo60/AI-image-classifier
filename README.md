@@ -1,4 +1,4 @@
-📑 User Guide: Ollama Image Manager Pro
+📑 User Guide: AI images classifier
 
 This application is an AI-powered tool designed to automatically sort and semantically search through your local image library using Ollama's vision models.
 🚀 1. Getting Started
