@@ -1,66 +1,60 @@
-📑 User Guide: AI images classifier
+# **User Guide: AI Image Classifier**
 
-This application is an AI-powered tool designed to automatically sort and semantically search through your local image library using Ollama's vision models.
-🚀 1. Getting Started
-Setting Up the Model
+## **Overview**
 
-    Launch Ollama: Ensure the Ollama service is running on your computer.
+The **AI Image Classifier** is a desktop application designed to help you manage and organize your image library using local Artificial Intelligence. Powered by **Ollama**, it analyzes the visual content of your files to sort them or make them searchable via keywords, all without uploading your data to the cloud.
 
-    Select Model: Upon startup, the app will automatically detect your installed models.
+---
 
-        Use a Multimodal model (like llava, moondream, or qwen-vl) for best results.
+## **1. Core Configuration**
 
-        Click the Refresh (🔄) button if you recently installed a new model.
+* **Ollama Model**: Select your preferred AI model from the dropdown menu at the top.
+* *Note*: For best performance, use multimodal models (capable of seeing images) such as `llava`, `moondream`, or `qwen-vl`.
 
-Selecting Directories
 
-    Source Folder: The directory containing the images you want to organize or search.
+* **Source Folder**: Click this button to select the directory containing the images you want to process.
+* **Destination Folder**: Select where you want the organized images to go. If not selected, the app will create subfolders within the source directory.
+* **Include Subfolders**: Check this box if you want the app to recursively scan all folders inside your source directory.
 
-    Destination Folder: (Optional) The directory where sorted images will be moved. If left blank, the app will create folders inside the Source directory.
+---
 
-📂 2. Automated Image Sorting
+## **2. Feature: Automatic Sorting**
 
-Located under the "Tri Automatique" (Automatic Sorting) tab.
+This tab is used to physically organize your files into category-based folders.
 
-    Manage Categories:
+* **Smart Rename**: When enabled, the AI generates a relevant filename based on the image content (e.g., `golden_retriever_playing_park.jpg`) before moving it.
+* **Manage Categories**:
+* **Add**: Type a category name in the input field and click "Add".
+* **Remove**: Double-click any category in the list to delete it.
 
-        Add: Type a new category in the entry field and click "Ajouter".
 
-        Remove: Double-click any category in the list to delete it.
+* **Start Sorting**: The AI analyzes each image, determines which category it belongs to, and moves it to the appropriate subfolder.
 
-    Smart Renaming: Check the "Renommer intelligemment" box if you want the AI to rename files based on a short description of their content (e.g., cat_on_sofa.jpg).
+---
 
-    Start Sorting: Click "Lancer le Tri". The AI will analyze each image and move it into the folder corresponding to the best-matching category.
+## **3. Feature: Keyword Search & Indexing**
 
-🔍 3. Semantic Search & Thumbnails
+This tab allows you to find specific images using natural language descriptions.
 
-Located under the "Recherche par mots clés" (search with keywords) tab. This feature allows you to find images by describing them, even if the filename is irrelevant.
-Step 1: Indexing (Mandatory for first use)
+* **Indexing**: Click the **Index** button to let the AI "describe" all your images. This creates a local file (`image_index.json`) that stores descriptions. This step is required before searching.
+* **Search**: Type any keyword (e.g., "mountain", "car", "blue") in the search bar. The app will display thumbnails of matching images.
+* **Batch Actions**:
+* Select images using the checkboxes on the thumbnails.
+* Use **Copy Selection** or **Move Selection** to quickly export your search results to a specific folder.
 
-Before searching, you must click "Indexer".
 
-    The AI will "read" and describe every image in your Source folder.
 
-    Persistence: A file named image_index.json is created in your source folder. This saves the descriptions so you don't have to re-index the next time you open the app.
+---
 
-Step 2: Searching
+## **4. Technical Requirements**
 
-    Enter keywords in the search bar (e.g., "sunset", "blue car", "manga character").
+* **Ollama**: The Ollama server must be running on your computer.
+* **Python Dependencies**: Requires `customtkinter`, `Pillow`, and the `ollama` Python library.
+* **Supported Formats**: `.jpg`, `.jpeg`, and `.png`.
 
-    Click "Chercher".
+---
 
-    The app will display thumbnails of all matching images.
+## **5. Tips for Success**
 
-Step 3: Batch Actions
-
-    Select: Check the boxes on the image thumbnails you want to process.
-
-    Copy/Move: Click "Copier Sélection" or "Déplacer Sélection" to send the chosen images to your Destination folder.
-
-🛠 4. Troubleshooting
-
-    Model not loading: Ensure Ollama is running (ollama serve) and that you have downloaded a vision model (ollama run llava).
-
-    Slow Search: Ensure you have clicked "Indexer" at least once. Searching without an index is not possible.
-
-    Missing Thumbnails: Ensure the Pillow library is installed (pip install Pillow).
+* **Performance**: AI image analysis is resource-intensive. Using a smaller model like `moondream` will be faster, while `llava` may be more accurate.
+* **Duplicates**: If a file with the same name exists in the destination, the app will skip the move to prevent data loss.
