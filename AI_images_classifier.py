@@ -15,7 +15,7 @@ class ImageSorterApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("AI-image-classifier")
+        self.title("AI Image Classifier")
         self.geometry("1000x950")
 
         self.target_dir = ""
@@ -34,35 +34,39 @@ class ImageSorterApp(ctk.CTk):
         # --- UI Layout ---
         self.grid_columnconfigure(0, weight=1)
 
-        # --- BLOC MODÈLE (STRICTEMENT ORIGINAL) ---
+        # --- MODEL BLOCK ---
         self.model_frame = ctk.CTkFrame(self)
         self.model_frame.pack(pady=15, padx=20, fill="x")
-        ctk.CTkLabel(self.model_frame, text="Modèle Ollama :", font=("Arial", 12, "bold")).pack(side="left", padx=10)
+        ctk.CTkLabel(self.model_frame, text="Ollama Model:", font=("Arial", 12, "bold")).pack(side="left", padx=10)
 
-        self.model_var = ctk.StringVar(value="Chargement des modèles...")
+        self.model_var = ctk.StringVar(value="Loading models...")
         self.combo_models = ctk.CTkComboBox(self.model_frame, variable=self.model_var, width=250, state="disabled")
         self.combo_models.pack(side="left", padx=5, fill="x", expand=True)
 
         self.btn_refresh = ctk.CTkButton(self.model_frame, text="🔄", width=40, command=self.refresh_models_thread)
         self.btn_refresh.pack(side="left", padx=10)
 
-        # --- GESTION DOSSIERS ---
+        # --- DIRECTORY MANAGEMENT ---
         self.dir_frame = ctk.CTkFrame(self)
         self.dir_frame.pack(pady=10, padx=20, fill="x")
         
-        ctk.CTkButton(self.dir_frame, text="Dossier Source", command=self.browse_source).grid(row=0, column=0, padx=10, pady=5)
-        self.lbl_status_source = ctk.CTkLabel(self.dir_frame, text="Non sélectionné", font=("Arial", 10, "italic"))
+        ctk.CTkButton(self.dir_frame, text="Source Folder", command=self.browse_source).grid(row=0, column=0, padx=10, pady=5)
+        self.lbl_status_source = ctk.CTkLabel(self.dir_frame, text="Not selected", font=("Arial", 10, "italic"))
         self.lbl_status_source.grid(row=0, column=1, sticky="w")
 
-        ctk.CTkButton(self.dir_frame, text="Dossier Destination", command=self.browse_dest).grid(row=1, column=0, padx=10, pady=5)
-        self.lbl_status_dest = ctk.CTkLabel(self.dir_frame, text="Par défaut : source", font=("Arial", 10, "italic"))
+        ctk.CTkButton(self.dir_frame, text="Destination Folder", command=self.browse_dest).grid(row=1, column=0, padx=10, pady=5)
+        self.lbl_status_dest = ctk.CTkLabel(self.dir_frame, text="Default: source", font=("Arial", 10, "italic"))
         self.lbl_status_dest.grid(row=1, column=1, sticky="w")
 
-        # --- SYSTÈME D'ONGLETS ---
+        # Option récursive
+        self.recursive_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(self.dir_frame, text="Include subfolders", variable=self.recursive_var).grid(row=2, column=0, columnspan=2, padx=10, pady=5, sticky="w")
+
+        # --- TAB SYSTEM ---
         self.tabs = ctk.CTkTabview(self)
         self.tabs.pack(fill="both", expand=True, padx=20, pady=10)
-        self.tab_sort = self.tabs.add("Tri Automatique")
-        self.tab_search = self.tabs.add("Recherche par mots clés")
+        self.tab_sort = self.tabs.add("Automatic Sorting")
+        self.tab_search = self.tabs.add("Keyword Search")
 
         self.setup_sort_tab()
         self.setup_search_tab()
@@ -71,17 +75,33 @@ class ImageSorterApp(ctk.CTk):
         self.progress.set(0)
         self.progress.pack(pady=10)
 
-        self.lbl_status = ctk.CTkLabel(self, text="Connexion à Ollama...", font=("Arial", 11))
+        self.lbl_status = ctk.CTkLabel(self, text="Connecting to Ollama...", font=("Arial", 11))
         self.lbl_status.pack()
 
         self.refresh_models_thread()
 
-    # --- TES FONCTIONS ORIGINALES POUR LE MODÈLE (INCHANGÉES) ---
+    # --- HELPER TO GET FILES ---
+    def get_image_files(self):
+        extensions = ('.png', '.jpg', '.jpeg')
+        file_list = []
+        if self.recursive_var.get():
+            for root, dirs, files in os.walk(self.target_dir):
+                # Éviter de scanner le dossier de destination s'il est à l'intérieur de la source
+                if self.dest_dir and os.path.abspath(root).startswith(os.path.abspath(self.dest_dir)):
+                    continue
+                for f in files:
+                    if f.lower().endswith(extensions):
+                        file_list.append(os.path.join(root, f))
+        else:
+            file_list = [os.path.join(self.target_dir, f) for f in os.listdir(self.target_dir) 
+                         if f.lower().endswith(extensions)]
+        return file_list
+
     def refresh_models_thread(self):
         self.btn_refresh.configure(state="disabled")
         self.combo_models.configure(state="disabled")
-        self.model_var.set("Chargement des modèles...")
-        self.lbl_status.configure(text="Connexion à Ollama...", text_color="gray")
+        self.model_var.set("Loading models...")
+        self.lbl_status.configure(text="Connecting to Ollama...", text_color="gray")
         threading.Thread(target=self._fetch_models, daemon=True).start()
 
     def _fetch_models(self):
@@ -100,13 +120,13 @@ class ImageSorterApp(ctk.CTk):
     def _update_model_ui(self, names, error):
         self.btn_refresh.configure(state="normal")
         if error:
-            self.lbl_status.configure(text=f"Erreur : {error}", text_color="red")
-            self.model_var.set("Ollama non disponible")
+            self.lbl_status.configure(text=f"Error: {error}", text_color="red")
+            self.model_var.set("Ollama unavailable")
             self.combo_models.configure(state="normal")
             return
         if not names:
-            self.lbl_status.configure(text="Aucun modèle trouvé.", text_color="orange")
-            self.model_var.set("Aucun modèle trouvé")
+            self.lbl_status.configure(text="No models found.", text_color="orange")
+            self.model_var.set("No models found")
             self.combo_models.configure(state="normal")
             return
         self.combo_models.configure(values=names, state="normal")
@@ -120,31 +140,27 @@ class ImageSorterApp(ctk.CTk):
             else: continue
             break
         self.model_var.set(selected)
-        self.lbl_status.configure(text=f"{len(names)} modèle(s) trouvé(s)", text_color="green")
+        self.lbl_status.configure(text=f"{len(names)} model(s) found", text_color="green")
 
-    # --- INTERFACE TRI (AVEC AJOUT/SUPPRESSION CATÉGORIES) ---
     def setup_sort_tab(self):
         self.rename_var = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(self.tab_sort, text="Renommer intelligemment via l'IA", variable=self.rename_var).pack(pady=10)
+        ctk.CTkCheckBox(self.tab_sort, text="Smart rename via AI", variable=self.rename_var).pack(pady=10)
 
-        # Ajout de catégorie
         self.entry_frame = ctk.CTkFrame(self.tab_sort, fg_color="transparent")
         self.entry_frame.pack(fill="x", padx=20, pady=5)
-        self.entry_cat = ctk.CTkEntry(self.entry_frame, placeholder_text="Nouvelle catégorie...")
+        self.entry_cat = ctk.CTkEntry(self.entry_frame, placeholder_text="New category...")
         self.entry_cat.pack(side="left", padx=5, fill="x", expand=True)
-        ctk.CTkButton(self.entry_frame, text="Ajouter", width=80, command=self.add_category).pack(side="right")
+        ctk.CTkButton(self.entry_frame, text="Add", width=80, command=self.add_category).pack(side="right")
 
-        # Liste des catégories
-        ctk.CTkLabel(self.tab_sort, text="Catégories (Double-clic pour supprimer) :", font=("Arial", 11)).pack(pady=2)
+        ctk.CTkLabel(self.tab_sort, text="Categories (Double-click to remove):", font=("Arial", 11)).pack(pady=2)
         self.listbox_cats = ctk.CTkTextbox(self.tab_sort, height=180, cursor="hand2")
         self.listbox_cats.pack(fill="both", expand=True, padx=20, pady=5)
         self.listbox_cats.bind("<Double-Button-1>", self.on_double_click)
         self.update_listbox()
 
-        self.btn_start = ctk.CTkButton(self.tab_sort, text="Lancer le Tri", fg_color="#2ecc71", height=40, command=self.start_sorting_thread)
+        self.btn_start = ctk.CTkButton(self.tab_sort, text="Start Sorting", fg_color="#2ecc71", height=40, command=self.start_sorting_thread)
         self.btn_start.pack(pady=15)
 
-    # --- GESTION CATÉGORIES ---
     def update_listbox(self):
         self.listbox_cats.configure(state="normal")
         self.listbox_cats.delete("1.0", "end")
@@ -168,25 +184,23 @@ class ImageSorterApp(ctk.CTk):
                 self.update_listbox()
         except: pass
 
-    # --- INTERFACE RECHERCHE ---
     def setup_search_tab(self):
         f = ctk.CTkFrame(self.tab_search)
         f.pack(fill="x", padx=10, pady=10)
-        self.entry_query = ctk.CTkEntry(f, placeholder_text="Mots-clés...")
+        self.entry_query = ctk.CTkEntry(f, placeholder_text="Keywords...")
         self.entry_query.pack(side="left", fill="x", expand=True, padx=5)
-        ctk.CTkButton(f, text="Chercher", width=80, command=self.run_search).pack(side="left", padx=2)
-        ctk.CTkButton(f, text="Indexer", width=80, command=self.start_indexing_thread).pack(side="left", padx=2)
+        ctk.CTkButton(f, text="Search", width=80, command=self.run_search).pack(side="left", padx=2)
+        ctk.CTkButton(f, text="Index", width=80, command=self.start_indexing_thread).pack(side="left", padx=2)
 
-        self.search_scroll = ctk.CTkScrollableFrame(self.tab_search, label_text="Résultats")
+        self.search_scroll = ctk.CTkScrollableFrame(self.tab_search, label_text="Results")
         self.search_scroll.pack(fill="both", expand=True, padx=10, pady=10)
         self.search_scroll.columnconfigure((0,1,2,3), weight=1)
 
         act = ctk.CTkFrame(self.tab_search)
         act.pack(fill="x", pady=5)
-        ctk.CTkButton(act, text="Copier Sélection", command=lambda: self.batch_action("copy")).pack(side="left", padx=20)
-        ctk.CTkButton(act, text="Déplacer Sélection", command=lambda: self.batch_action("move"), fg_color="#e67e22").pack(side="left", padx=20)
+        ctk.CTkButton(act, text="Copy Selection", command=lambda: self.batch_action("copy")).pack(side="left", padx=20)
+        ctk.CTkButton(act, text="Move Selection", command=lambda: self.batch_action("move"), fg_color="#e67e22").pack(side="left", padx=20)
 
-    # --- LOGIQUE INDEX & RECHERCHE ---
     def load_index(self):
         if not self.target_dir: return
         idx_path = os.path.join(self.target_dir, "image_index.json")
@@ -205,29 +219,34 @@ class ImageSorterApp(ctk.CTk):
         threading.Thread(target=self.run_indexing, daemon=True).start()
 
     def run_indexing(self):
-        files = [f for f in os.listdir(self.target_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
-        for i, f in enumerate(files):
-            if f not in self.index_data:
-                self.lbl_status.configure(text=f"Indexation : {f}")
+        files = self.get_image_files()
+        for i, p in enumerate(files):
+            f_name = os.path.basename(p)
+            if f_name not in self.index_data:
+                self.lbl_status.configure(text=f"Indexing: {f_name}")
                 try:
-                    res = ollama.generate(model=self.model_var.get(), prompt="Describe image in 10 words", images=[os.path.join(self.target_dir, f)])
-                    self.index_data[f] = res['response'].lower()
+                    res = ollama.generate(model=self.model_var.get(), prompt="Describe image in 10 words", images=[p])
+                    self.index_data[f_name] = res['response'].lower()
                 except: continue
             self.progress.set((i+1)/len(files))
         self.save_index()
-        self.lbl_status.configure(text="Indexation terminée", text_color="green")
+        self.lbl_status.configure(text="Indexing complete", text_color="green")
 
     def run_search(self):
         q = self.entry_query.get().lower()
         for w in self.search_scroll.winfo_children(): w.destroy()
         self.found_images = []
         r, c = 0, 0
+        # Recherche simple dans l'index (basée sur le nom du fichier)
         for f_name, desc in self.index_data.items():
             if q in desc or q in f_name.lower():
-                path = os.path.join(self.target_dir, f_name)
-                self.display_thumb(path, r, c)
-                c += 1
-                if c > 3: c = 0; r += 1
+                # On cherche le chemin complet correspondant au nom dans l'arborescence
+                files = self.get_image_files()
+                path = next((p for p in files if os.path.basename(p) == f_name), None)
+                if path:
+                    self.display_thumb(path, r, c)
+                    c += 1
+                    if c > 3: c = 0; r += 1
 
     def display_thumb(self, path, r, c):
         try:
@@ -250,9 +269,8 @@ class ImageSorterApp(ctk.CTk):
                     if mode == "copy": shutil.copy(path, t)
                     else: shutil.move(path, t)
                 except: pass
-        messagebox.showinfo("OK", "Terminé")
+        messagebox.showinfo("Done", "Operation completed")
 
-    # --- LOGIQUE DE TRI ---
     def start_sorting_thread(self):
         if not self.target_dir: return
         self.btn_start.configure(state="disabled")
@@ -260,28 +278,29 @@ class ImageSorterApp(ctk.CTk):
 
     def run_sorting(self):
         final_dest = self.dest_dir if self.dest_dir else self.target_dir
-        for cat in self.categories + ['inconnu']: os.makedirs(os.path.join(final_dest, cat), exist_ok=True)
-        files = [f for f in os.listdir(self.target_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
-        for i, f in enumerate(files):
-            p = os.path.join(self.target_dir, f)
-            self.lbl_status.configure(text=f"Tri : {f}")
+        for cat in self.categories + ['unknown']: os.makedirs(os.path.join(final_dest, cat), exist_ok=True)
+        
+        files = self.get_image_files()
+        for i, p in enumerate(files):
+            f_name = os.path.basename(p)
+            self.lbl_status.configure(text=f"Sorting: {f_name}")
             res = ollama.generate(model=self.model_var.get(), prompt=f"Pick ONE category: {self.categories}", images=[p])
-            cat = 'inconnu'
+            cat = 'unknown'
             for c in self.categories:
                 if c in res['response'].lower(): cat = c; break
             
-            new_f = f
+            new_f = f_name
             if self.rename_var.get():
                 r_res = ollama.generate(model=self.model_var.get(), prompt="5 words description no punctuation", images=[p])
                 clean = re.sub(r'[^a-z0-9_]', '', r_res['response'].lower().replace(" ","_"))[:50]
-                new_f = f"{clean}{os.path.splitext(f)[1]}"
+                new_f = f"{clean}{os.path.splitext(f_name)[1]}"
 
             try: shutil.move(p, os.path.join(final_dest, cat, new_f))
             except: pass
             self.progress.set((i+1)/len(files))
         
         self.btn_start.configure(state="normal")
-        self.lbl_status.configure(text="Tri terminé")
+        self.lbl_status.configure(text="Sorting complete")
 
     def browse_source(self):
         p = filedialog.askdirectory()
