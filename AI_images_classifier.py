@@ -23,7 +23,7 @@ class ImageSorterApp(ctk.CTk):
         self.dest_dir = "" 
         self.index_data = {} 
         self.found_images = [] 
-        # Utilisation de plusieurs cœurs pour les miniatures (CPU)
+        # Détection automatique du nombre de cœurs CPU pour le multithreading
         self.max_workers = os.cpu_count() or 4 
 
         self.categories = [
@@ -37,7 +37,7 @@ class ImageSorterApp(ctk.CTk):
         # --- UI Layout ---
         self.grid_columnconfigure(0, weight=1)
 
-        # --- MODEL BLOCK (UNTOUCHED) ---
+        # --- MODEL BLOCK (Logic inchangée) ---
         self.model_frame = ctk.CTkFrame(self)
         self.model_frame.pack(pady=15, padx=20, fill="x")
         ctk.CTkLabel(self.model_frame, text="Ollama Model:", font=("Arial", 12, "bold")).pack(side="left", padx=10)
@@ -84,9 +84,9 @@ class ImageSorterApp(ctk.CTk):
 
         self.refresh_models_thread()
 
-    # --- OPTIMIZATIONS : CACHE & THREADING ---
+    # --- OPTIMISATION MINIATURES & MULTITHREADING ---
     def get_ai_thumb(self, original_path):
-        """Crée ou récupère une miniature (384px) pour l'IA."""
+        """Crée ou récupère une miniature pour l'IA (Thread-safe)"""
         if not self.target_dir: return original_path
         try:
             cache_dir = os.path.join(self.target_dir, ".cache_ai")
@@ -104,8 +104,8 @@ class ImageSorterApp(ctk.CTk):
             return original_path
 
     def pre_generate_all_thumbs(self, files):
-        """Génération parallèle des miniatures (CPU Bound)."""
-        self.lbl_status.configure(text=f"Optimization: Preparing thumbnails ({self.max_workers} threads)...")
+        """Utilise ThreadPoolExecutor pour créer toutes les miniatures en parallèle."""
+        self.lbl_status.configure(text=f"Optimization: Generating thumbnails ({self.max_workers} threads)...")
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             list(executor.map(self.get_ai_thumb, files))
 
@@ -116,7 +116,7 @@ class ImageSorterApp(ctk.CTk):
             shutil.rmtree(cache_dir)
             messagebox.showinfo("Cache", "AI Cache cleared.")
 
-    # --- CORE METHODS ---
+    # --- GESTION DES FICHIERS ---
     def get_image_files(self):
         extensions = ('.png', '.jpg', '.jpeg')
         file_list = []
@@ -133,6 +133,7 @@ class ImageSorterApp(ctk.CTk):
                          if f.lower().endswith(extensions)]
         return file_list
 
+    # --- LOGIQUE OLLAMA MODÈLES ---
     def refresh_models_thread(self):
         self.btn_refresh.configure(state="disabled")
         self.combo_models.configure(state="disabled")
@@ -163,6 +164,7 @@ class ImageSorterApp(ctk.CTk):
         self.model_var.set(selected)
         self.lbl_status.configure(text=f"{len(names)} model(s) found", text_color="green")
 
+    # --- INTERFACE ET ACTIONS ---
     def setup_sort_tab(self):
         self.rename_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(self.tab_sort, text="Smart rename via AI", variable=self.rename_var).pack(pady=10)
@@ -171,11 +173,25 @@ class ImageSorterApp(ctk.CTk):
         self.entry_cat = ctk.CTkEntry(self.entry_frame, placeholder_text="New category...")
         self.entry_cat.pack(side="left", padx=5, fill="x", expand=True)
         ctk.CTkButton(self.entry_frame, text="Add", width=80, command=self.add_category).pack(side="right")
+        
         self.listbox_cats = ctk.CTkTextbox(self.tab_sort, height=180, cursor="hand2")
         self.listbox_cats.pack(fill="both", expand=True, padx=20, pady=5)
+        
+        # Réactivation du double-clic
+        self.listbox_cats.bind("<Double-Button-1>", self.on_double_click)
+        
         self.update_listbox()
         self.btn_start = ctk.CTkButton(self.tab_sort, text="Start Sorting", fg_color="#2ecc71", command=self.start_sorting_thread)
         self.btn_start.pack(pady=15)
+
+    def on_double_click(self, event):
+        try:
+            line_idx = self.listbox_cats.index(f"@{event.x},{event.y}").split('.')[0]
+            cat_name = self.listbox_cats.get(f"{line_idx}.0", f"{line_idx}.end").strip()
+            if cat_name in self.categories:
+                self.categories.remove(cat_name)
+                self.update_listbox()
+        except: pass
 
     def update_listbox(self):
         self.listbox_cats.configure(state="normal")
@@ -198,16 +214,18 @@ class ImageSorterApp(ctk.CTk):
         self.search_scroll.pack(fill="both", expand=True, padx=10, pady=10)
         self.search_scroll.columnconfigure((0,1,2,3), weight=1)
 
+    # --- PERSISTANCE INDEX ---
     def load_index(self):
         idx_path = os.path.join(self.target_dir, "image_index.json")
         if os.path.exists(idx_path):
             with open(idx_path, 'r', encoding='utf-8') as f: self.index_data = json.load(f)
 
     def save_index(self):
+        if not self.target_dir: return
         idx_path = os.path.join(self.target_dir, "image_index.json")
         with open(idx_path, 'w', encoding='utf-8') as f: json.dump(self.index_data, f, indent=4)
 
-    # --- ACTIONS ---
+    # --- PROCESSUS INDEXATION ---
     def start_indexing_thread(self):
         if not self.target_dir: return
         threading.Thread(target=self.run_indexing, daemon=True).start()
@@ -219,16 +237,17 @@ class ImageSorterApp(ctk.CTk):
         for i, p in enumerate(files):
             f_name = os.path.basename(p)
             if f_name not in self.index_data:
-                self.lbl_status.configure(text=f"AI Indexing: {f_name}")
+                self.lbl_status.configure(text=f"AI Analysis: {f_name}")
                 thumb = self.get_ai_thumb(p)
                 try:
-                    res = ollama.generate(model=self.model_var.get(), prompt="Describe image content in 10 words", images=[thumb])
+                    res = ollama.generate(model=self.model_var.get(), prompt="Describe image in 10 words", images=[thumb])
                     self.index_data[f_name] = res['response'].lower()
                 except: continue
             self.progress.set((i+1)/len(files))
         self.save_index()
         self.lbl_status.configure(text="Indexing complete", text_color="green")
 
+    # --- PROCESSUS TRI ---
     def start_sorting_thread(self):
         if not self.target_dir: return
         self.btn_start.configure(state="disabled")
@@ -248,12 +267,12 @@ class ImageSorterApp(ctk.CTk):
             
             try:
                 # Classification
-                res = ollama.generate(model=self.model_var.get(), prompt=f"Category: {self.categories}", images=[thumb])
+                res = ollama.generate(model=self.model_var.get(), prompt=f"Pick ONE category: {self.categories}", images=[thumb])
                 cat = 'unknown'
                 for c in self.categories:
                     if c in res['response'].lower(): cat = c; break
                 
-                # Renommer
+                # Renommage intelligent
                 new_f = f_name
                 if self.rename_var.get():
                     r_res = ollama.generate(model=self.model_var.get(), prompt="5 words description no punctuation", images=[thumb])
