@@ -1,5 +1,26 @@
 # **User Guide: AI Image Classifier**
 
+update 02/24/26 
+The core processing engine has been upgraded to handle large image libraries significantly faster using two main strategies:
+1. Multi-threaded Image Proxying
+
+Instead of sending original high-resolution files (which are heavy and slow) directly to the LLM, the app now creates 384px thumbnails.
+
+    Parallel Processing: The app uses all available CPU cores (ThreadPoolExecutor) to generate these miniatures simultaneously.
+
+    I/O Efficiency: Processing 50KB files instead of 10MB+ files reduces data transfer bottlenecks to Ollama by over 90%.
+
+2. Persistent AI Caching
+
+A hidden directory (.cache_ai) is now created within your source folder.
+
+    Skip Redundancy: If you restart the app or re-index the same folder, the AI instantly retrieves existing thumbnails instead of regenerating them.
+
+    Manual Control: A "Clear AI Cache" button has been added to the UI to safely delete these temporary files once your sorting is finalized.
+
+
+    
+
 ## **Overview**
 
 The **AI Image Classifier** is a desktop application designed to help you manage and organize your image library using local Artificial Intelligence. Powered by **Ollama**, it analyzes the visual content of your files to sort them or make them searchable via keywords, all without uploading your data to the cloud.
