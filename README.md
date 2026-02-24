@@ -77,5 +77,5 @@ This tab allows you to find specific images using natural language descriptions.
 
 ## **5. Tips for Success**
 
-* **Performance**: AI image analysis is resource-intensive. Using a smaller model like `moondream` will be faster, while `llava` may be more accurate.
+* **Performance**: I recommend using Ministral-3:3b, which is very light and very effective.
 * **Duplicates**: If a file with the same name exists in the destination, the app will skip the move to prevent data loss.
