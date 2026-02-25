@@ -1,3 +1,11 @@
+INSTALLATION
+
+You must have Python installed.
+Unzip the archive wherever you want.
+Run the run.bat file:
+Open the console in the directory where you unzipped the file and type
+“./run.bat”
+
 # **User Guide: AI Image Classifier**
 
 update 02/25/26
