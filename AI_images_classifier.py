@@ -24,10 +24,15 @@ class ImageSorterApp(ctk.CTk):
         self.target_dir = ""
         self.dest_dir = ""
         self.index_data = {}
-        self.max_workers = 3  # Optimal pour 8Go VRAM
+        self.max_workers = 3 
         self._thumb_refs = []
-        self.selected_files = set() # Chemins des fichiers sélectionnés en recherche
+        self.selected_files = set() 
         self.current_search_vars = {}
+        
+        # --- Variables de Pagination ---
+        self.current_page = 0
+        self.results_per_page = 50
+        self.all_search_results = []
 
         self.script_dir = os.path.dirname(os.path.abspath(__file__))
         self.index_path = os.path.join(self.script_dir, "global_image_index.json")
@@ -88,8 +93,6 @@ class ImageSorterApp(ctk.CTk):
         self.lbl_status = ctk.CTkLabel(self, text="Prêt", font=("Arial", 11))
         self.lbl_status.pack()
 
-    # --- LOGIQUE DE TRI TURBO ---
-
     def get_ai_thumb(self, original_path):
         try:
             file_stats = os.stat(original_path)
@@ -97,7 +100,7 @@ class ImageSorterApp(ctk.CTk):
             thumb_path = os.path.join(self.global_cache_dir, f"thumb_{file_id}.jpg")
             if not os.path.exists(thumb_path):
                 with Image.open(original_path) as img:
-                    img.thumbnail((224, 224), Image.Resampling.LANCZOS)
+                    img.thumbnail((336, 336), Image.Resampling.LANCZOS)
                     img.convert("RGB").save(thumb_path, "JPEG", quality=70)
             return thumb_path
         except: return original_path
@@ -115,14 +118,17 @@ class ImageSorterApp(ctk.CTk):
             file_id = re.sub(r'[^a-zA-Z0-9]', '_', f"{fname}_{orig_size}")
             thumb = self.get_ai_thumb(orig_path)
             
-            if self.rename_var.get():
-                prompt = (f"Return ONLY a JSON object with: 'cat' (choose ONE from {self.categories}) "
-                          f"and 'name' (5 words description for a filename, lowercase, no spaces).")
-            else:
-                prompt = f"Pick ONE category from {self.categories}. Reply with ONLY the category name."
+            # --- MODIFICATION DU PROMPT POUR DESCRIPTION PRÉCISE ---
+            prompt = (
+                f"Analyze this image and return ONLY a JSON object with these fields:\n"
+                f"1. 'cat': Pick ONE category from {self.categories}.\n"
+                f"2. 'name': A 5-word file name (lowercase, underscores, no spaces).\n"
+                f"3. 'desc': A detailed list of the 4 to 5 most important visual elements. "
+                f"For each element, provide a very short description (e.g., 'Sky: blue with clouds')."
+            )
 
             response = self._ollama_generate(prompt, thumb)
-            cat, new_f = 'unknown', fname
+            cat, new_f, detailed_desc = 'unknown', fname, response.strip()
 
             if "{" in response:
                 try:
@@ -130,6 +136,11 @@ class ImageSorterApp(ctk.CTk):
                     cat_raw = data.get('cat', '').lower()
                     for c in self.categories:
                         if c in cat_raw: cat = c; break
+                    
+                    # Récupération de la description structurée
+                    if 'desc' in data:
+                        detailed_desc = data['desc']
+                    
                     if self.rename_var.get():
                         clean_name = re.sub(r'[^a-z0-9_]', '', data.get('name', '').lower().replace(" ", "_"))
                         if clean_name: new_f = f"{clean_name}{os.path.splitext(fname)[1]}"
@@ -147,7 +158,8 @@ class ImageSorterApp(ctk.CTk):
                 counter += 1
 
             shutil.move(orig_path, dest_path)
-            return file_id, {"original_name": fname, "current_path": dest_path, "category": cat, "ai_description": response.strip(), "thumb_path": thumb}
+            # Enregistrement de la description enrichie dans l'index
+            return file_id, {"original_name": fname, "current_path": dest_path, "category": cat, "ai_description": detailed_desc, "thumb_path": thumb}
         except: return None, None
 
     def run_sorting(self):
@@ -175,13 +187,12 @@ class ImageSorterApp(ctk.CTk):
         self.save_index()
         self.after(0, lambda: (self.btn_start.configure(state="normal"), self.lbl_status.configure(text="Tri terminé ✔", text_color="#2ecc71")))
 
-    # --- ONGLET RECHERCHE & GESTION ---
-
     def setup_search_tab(self):
         top_frame = ctk.CTkFrame(self.tab_search, fg_color="transparent")
         top_frame.pack(fill="x", padx=20, pady=10)
         self.search_entry = ctk.CTkEntry(top_frame, placeholder_text="Rechercher...", font=("Arial", 13))
         self.search_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        self.search_entry.bind("<Return>", lambda e: self.run_search())
         ctk.CTkButton(top_frame, text="🔍", command=self.run_search, width=50).pack(side="left", padx=2)
         ctk.CTkButton(top_frame, text="✅ Tout", command=self.select_all_search, width=60, fg_color="#34495e").pack(side="left", padx=2)
 
@@ -197,6 +208,88 @@ class ImageSorterApp(ctk.CTk):
         self.search_scroll.pack(fill="both", expand=True, padx=10, pady=5)
         for col in range(5): self.search_scroll.columnconfigure(col, weight=1)
 
+    def run_search(self):
+        query = self.search_entry.get().strip().lower()
+        self.all_search_results = [d for d in self.index_data.values() if query in str(d).lower()]
+        self.current_page = 0
+        self.display_page()
+
+    def display_page(self):
+        for w in self.search_scroll.winfo_children(): w.destroy()
+        self._thumb_refs.clear()
+        self.current_search_vars = {}
+
+        if not self.all_search_results:
+            ctk.CTkLabel(self.search_scroll, text="Aucun résultat").pack(pady=20)
+            return
+
+        total_items = len(self.all_search_results)
+        total_pages = (total_items - 1) // self.results_per_page + 1
+        self.current_page = max(0, min(self.current_page, total_pages - 1))
+        
+        start = self.current_page * self.results_per_page
+        end = start + self.results_per_page
+        page_items = self.all_search_results[start:end]
+
+        ctrl_frame = ctk.CTkFrame(self.search_scroll, fg_color="transparent")
+        ctrl_frame.grid(row=0, column=0, columnspan=5, pady=10)
+
+        ctk.CTkButton(ctrl_frame, text="<", width=40, state="normal" if self.current_page > 0 else "disabled", 
+                      command=self.prev_page).pack(side="left", padx=5)
+
+        ctk.CTkLabel(ctrl_frame, text="Page").pack(side="left", padx=2)
+        self.page_input = ctk.CTkEntry(ctrl_frame, width=45)
+        self.page_input.insert(0, str(self.current_page + 1))
+        self.page_input.pack(side="left", padx=2)
+        self.page_input.bind("<Return>", lambda e: self.go_to_page())
+        
+        ctk.CTkLabel(ctrl_frame, text=f"/ {total_pages} ({total_items} images)").pack(side="left", padx=5)
+
+        ctk.CTkButton(ctrl_frame, text=">", width=40, state="normal" if end < total_items else "disabled", 
+                      command=self.next_page).pack(side="left", padx=5)
+
+        COLS = 5
+        for idx, data in enumerate(page_items):
+            path = data.get("current_path")
+            if not path or not os.path.exists(path): continue
+            
+            card = ctk.CTkFrame(self.search_scroll, fg_color="#2c3e50")
+            card.grid(row=(idx // COLS) + 1, column=idx % COLS, padx=5, pady=5, sticky="nsew")
+            
+            var = ctk.BooleanVar(value=path in self.selected_files)
+            self.current_search_vars[path] = var
+            ctk.CTkCheckBox(card, text="", variable=var, width=20, command=lambda p=path, v=var: self.toggle_selection(p, v)).pack(anchor="ne", padx=5)
+
+            try:
+                img = Image.open(data.get("thumb_path")).resize((120, 120))
+                ph = ImageTk.PhotoImage(img)
+                self._thumb_refs.append(ph)
+                ctk.CTkLabel(card, image=ph, text="").pack()
+            except: ctk.CTkLabel(card, text="Erreur Image").pack()
+            
+            ctk.CTkLabel(card, text=data.get("category"), font=("Arial", 9, "bold")).pack()
+            ctk.CTkButton(card, text="📂", width=30, command=lambda p=path: self.reveal_file(p)).pack(pady=2)
+
+    def next_page(self):
+        self.current_page += 1
+        self.display_page()
+        self.search_scroll._parent_canvas.yview_moveto(0)
+
+    def prev_page(self):
+        self.current_page -= 1
+        self.display_page()
+        self.search_scroll._parent_canvas.yview_moveto(0)
+
+    def go_to_page(self):
+        try:
+            val = int(self.page_input.get()) - 1
+            total_pages = (len(self.all_search_results) - 1) // self.results_per_page + 1
+            if 0 <= val < total_pages:
+                self.current_page = val
+                self.display_page()
+                self.search_scroll._parent_canvas.yview_moveto(0)
+        except: pass
+
     def toggle_selection(self, path, var):
         if var.get(): self.selected_files.add(path)
         else: self.selected_files.discard(path)
@@ -207,34 +300,6 @@ class ImageSorterApp(ctk.CTk):
             var.set(True)
             self.selected_files.add(path)
         self.lbl_select_count.configure(text=f"{len(self.selected_files)} sélectionné(s)")
-
-    def run_search(self):
-        query = self.search_entry.get().strip().lower()
-        for w in self.search_scroll.winfo_children(): w.destroy()
-        self._thumb_refs.clear()
-        self.current_search_vars = {}
-        
-        results = [d for d in self.index_data.values() if query in str(d).lower()]
-        COLS = 5
-        for idx, data in enumerate(results):
-            path = data.get("current_path")
-            if not os.path.exists(path): continue
-            
-            card = ctk.CTkFrame(self.search_scroll, fg_color="#2c3e50")
-            card.grid(row=idx//COLS, column=idx%COLS, padx=5, pady=5, sticky="nsew")
-            
-            var = ctk.BooleanVar(value=path in self.selected_files)
-            self.current_search_vars[path] = var
-            ctk.CTkCheckBox(card, text="", variable=var, width=20, command=lambda p=path, v=var: self.toggle_selection(p, v)).pack(anchor="ne", padx=5)
-
-            try:
-                img = Image.open(data.get("thumb_path")).resize((120, 120))
-                ph = ImageTk.PhotoImage(img); self._thumb_refs.append(ph)
-                ctk.CTkLabel(card, image=ph, text="").pack()
-            except: ctk.CTkLabel(card, text="Erreur Image").pack()
-            
-            ctk.CTkLabel(card, text=data.get("category"), font=("Arial", 9, "bold")).pack()
-            ctk.CTkButton(card, text="📂", width=30, command=lambda p=path: self.reveal_file(p)).pack(pady=2)
 
     def bulk_action(self, mode):
         if not self.selected_files: return
@@ -256,8 +321,6 @@ class ImageSorterApp(ctk.CTk):
         self.save_index()
         messagebox.showinfo("OK", f"{success} fichiers traités.")
         if mode == "move": self.run_search()
-
-    # --- UTILITAIRES ---
 
     def setup_sort_tab(self):
         self.rename_var = ctk.CTkCheckBox(self.tab_sort, text="Renommage intelligent (IA unique)")
@@ -347,5 +410,3 @@ class ImageSorterApp(ctk.CTk):
 if __name__ == "__main__":
     app = ImageSorterApp()
     app.mainloop()
-
-
