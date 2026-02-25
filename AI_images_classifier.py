@@ -2,6 +2,8 @@ import os
 import shutil
 import threading
 import json
+import subprocess
+import sys
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
@@ -16,15 +18,20 @@ class ImageSorterApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("AI Image Classifier - Turbo Edition")
-        self.geometry("1000x950")
+        self.title("AI Image Classifier - Turbo Edition (GPU Optimized)")
+        self.geometry("1100x950")
 
         self.target_dir = ""
-        self.dest_dir = "" 
-        self.index_data = {} 
-        self.found_images = [] 
-        # Détection automatique du nombre de cœurs CPU pour le multithreading
-        self.max_workers = os.cpu_count() or 4 
+        self.dest_dir = ""
+        self.index_data = {}
+        # Pour 8Go de VRAM, 3 workers est un excellent compromis
+        self.max_workers = 3 
+        self._thumb_refs = []
+
+        self.script_dir = os.path.dirname(os.path.abspath(__file__))
+        self.index_path = os.path.join(self.script_dir, "global_image_index.json")
+        self.global_cache_dir = os.path.join(self.script_dir, "ai_cache_thumbnails")
+        os.makedirs(self.global_cache_dir, exist_ok=True)
 
         self.categories = [
             "realism", "comics", "manga", "painting", "watercolor",
@@ -34,43 +41,41 @@ class ImageSorterApp(ctk.CTk):
             "steampunk", "horror", "abstract", "minimalism", "caricatures"
         ]
 
-        # --- UI Layout ---
         self.grid_columnconfigure(0, weight=1)
+        self.setup_ui()
+        self.load_index()
+        self.refresh_models_thread()
 
-        # --- MODEL BLOCK (Logic inchangée) ---
+    def setup_ui(self):
+        # --- SÉLECTEUR DE MODÈLE ---
         self.model_frame = ctk.CTkFrame(self)
         self.model_frame.pack(pady=15, padx=20, fill="x")
-        ctk.CTkLabel(self.model_frame, text="Ollama Model:", font=("Arial", 12, "bold")).pack(side="left", padx=10)
-
-        self.model_var = ctk.StringVar(value="Loading models...")
+        self.model_var = ctk.StringVar(value="Chargement...")
         self.combo_models = ctk.CTkComboBox(self.model_frame, variable=self.model_var, width=250, state="disabled")
-        self.combo_models.pack(side="left", padx=5, fill="x", expand=True)
+        self.combo_models.pack(side="left", padx=10, fill="x", expand=True)
+        ctk.CTkButton(self.model_frame, text="🔄", width=40, command=self.refresh_models_thread).pack(side="left", padx=10)
 
-        self.btn_refresh = ctk.CTkButton(self.model_frame, text="🔄", width=40, command=self.refresh_models_thread)
-        self.btn_refresh.pack(side="left", padx=10)
-
-        # --- DIRECTORY MANAGEMENT ---
+        # --- DOSSIERS ---
         self.dir_frame = ctk.CTkFrame(self)
         self.dir_frame.pack(pady=10, padx=20, fill="x")
-        
-        ctk.CTkButton(self.dir_frame, text="Source Folder", command=self.browse_source).grid(row=0, column=0, padx=10, pady=5)
-        self.lbl_status_source = ctk.CTkLabel(self.dir_frame, text="Not selected", font=("Arial", 10, "italic"))
+
+        ctk.CTkButton(self.dir_frame, text="Dossier Source", command=self.browse_source, width=150).grid(row=0, column=0, padx=10, pady=5)
+        self.lbl_status_source = ctk.CTkLabel(self.dir_frame, text="Non sélectionné", font=("Arial", 10, "italic"))
         self.lbl_status_source.grid(row=0, column=1, sticky="w")
 
-        ctk.CTkButton(self.dir_frame, text="Destination Folder", command=self.browse_dest).grid(row=1, column=0, padx=10, pady=5)
-        self.lbl_status_dest = ctk.CTkLabel(self.dir_frame, text="Default: source", font=("Arial", 10, "italic"))
+        ctk.CTkButton(self.dir_frame, text="Dossier Destination", command=self.browse_dest, width=150).grid(row=1, column=0, padx=10, pady=5)
+        self.lbl_status_dest = ctk.CTkLabel(self.dir_frame, text="Par défaut : source", font=("Arial", 10, "italic"))
         self.lbl_status_dest.grid(row=1, column=1, sticky="w")
 
         self.recursive_var = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(self.dir_frame, text="Include subfolders", variable=self.recursive_var).grid(row=2, column=0, padx=10, pady=5, sticky="w")
-        
-        ctk.CTkButton(self.dir_frame, text="Clear AI Cache", fg_color="#c0392b", hover_color="#962d22", command=self.clear_cache).grid(row=2, column=1, padx=10, pady=5, sticky="e")
+        ctk.CTkCheckBox(self.dir_frame, text="Inclure sous-dossiers", variable=self.recursive_var).grid(row=2, column=0, padx=10, pady=5)
+        ctk.CTkButton(self.dir_frame, text="Purger Cache", fg_color="#c0392b", command=self.clear_cache).grid(row=2, column=1, padx=10, pady=5, sticky="e")
 
-        # --- TAB SYSTEM ---
+        # --- ONGLETS ---
         self.tabs = ctk.CTkTabview(self)
         self.tabs.pack(fill="both", expand=True, padx=20, pady=10)
-        self.tab_sort = self.tabs.add("Automatic Sorting")
-        self.tab_search = self.tabs.add("Keyword Search")
+        self.tab_sort = self.tabs.add("Tri Automatique")
+        self.tab_search = self.tabs.add("Recherche")
 
         self.setup_sort_tab()
         self.setup_search_tab()
@@ -79,247 +84,255 @@ class ImageSorterApp(ctk.CTk):
         self.progress.set(0)
         self.progress.pack(pady=10)
 
-        self.lbl_status = ctk.CTkLabel(self, text="Ready", font=("Arial", 11))
+        self.lbl_status = ctk.CTkLabel(self, text="Prêt", font=("Arial", 11))
         self.lbl_status.pack()
 
-        self.refresh_models_thread()
+    # ─────────────────────────────────────────────────────────
+    # LOGIQUE OPTIMISÉE
+    # ─────────────────────────────────────────────────────────
 
-    # --- OPTIMISATION MINIATURES & MULTITHREADING ---
     def get_ai_thumb(self, original_path):
-        """Crée ou récupère une miniature pour l'IA (Thread-safe)"""
-        if not self.target_dir: return original_path
+        """Miniature 224x224 : Standard pour les modèles de Vision (accélère le traitement)."""
         try:
-            cache_dir = os.path.join(self.target_dir, ".cache_ai")
-            if not os.path.exists(cache_dir): os.makedirs(cache_dir)
-
-            file_id = re.sub(r'[^a-zA-Z0-9]', '_', os.path.basename(original_path))
-            thumb_path = os.path.join(cache_dir, f"ai_thumb_{file_id}.jpg")
-
+            file_stats = os.stat(original_path)
+            file_id = re.sub(r'[^a-zA-Z0-9]', '_', f"{os.path.basename(original_path)}_{file_stats.st_size}")
+            thumb_path = os.path.join(self.global_cache_dir, f"thumb_{file_id}.jpg")
             if not os.path.exists(thumb_path):
                 with Image.open(original_path) as img:
-                    img.thumbnail((384, 384), Image.Resampling.LANCZOS)
-                    img.convert("RGB").save(thumb_path, "JPEG", quality=75)
+                    img.thumbnail((224, 224), Image.Resampling.LANCZOS)
+                    img.convert("RGB").save(thumb_path, "JPEG", quality=70)
             return thumb_path
-        except:
+        except Exception as e:
             return original_path
 
-    def pre_generate_all_thumbs(self, files):
-        """Utilise ThreadPoolExecutor pour créer toutes les miniatures en parallèle."""
-        self.lbl_status.configure(text=f"Optimization: Generating thumbnails ({self.max_workers} threads)...")
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            list(executor.map(self.get_ai_thumb, files))
+    def _ollama_generate(self, prompt, thumb_path):
+        with open(thumb_path, 'rb') as fh:
+            img_bytes = fh.read()
+        res = ollama.generate(model=self.model_var.get(), prompt=prompt, images=[img_bytes])
+        return res.get('response', '') if isinstance(res, dict) else getattr(res, 'response', str(res))
 
-    def clear_cache(self):
-        if not self.target_dir: return
-        cache_dir = os.path.join(self.target_dir, ".cache_ai")
-        if os.path.exists(cache_dir):
-            shutil.rmtree(cache_dir)
-            messagebox.showinfo("Cache", "AI Cache cleared.")
-
-    # --- GESTION DES FICHIERS ---
-    def get_image_files(self):
-        extensions = ('.png', '.jpg', '.jpeg')
-        file_list = []
-        if not self.target_dir or not os.path.exists(self.target_dir): return []
-        
-        if self.recursive_var.get():
-            for root, dirs, files in os.walk(self.target_dir):
-                if ".cache_ai" in root: continue
-                for f in files:
-                    if f.lower().endswith(extensions):
-                        file_list.append(os.path.join(root, f))
-        else:
-            file_list = [os.path.join(self.target_dir, f) for f in os.listdir(self.target_dir) 
-                         if f.lower().endswith(extensions)]
-        return file_list
-
-    # --- LOGIQUE OLLAMA MODÈLES ---
-    def refresh_models_thread(self):
-        self.btn_refresh.configure(state="disabled")
-        self.combo_models.configure(state="disabled")
-        self.model_var.set("Loading models...")
-        threading.Thread(target=self._fetch_models, daemon=True).start()
-
-    def _fetch_models(self):
+    def process_single_image(self, orig_path, final_dest):
+        """Analyse et déplace une image. Utilisé par le ThreadPoolExecutor."""
+        fname = os.path.basename(orig_path)
         try:
-            models_info = ollama.list()
-            models_list = (models_info.get('models', []) if isinstance(models_info, dict) else getattr(models_info, 'models', []))
-            names = []
-            for m in models_list:
-                if isinstance(m, dict): name = m.get('name') or m.get('model', '')
-                else: name = getattr(m, 'name', None) or getattr(m, 'model', '')
-                if name: names.append(name)
-            self.after(0, self._update_model_ui, names, None)
+            orig_size = os.stat(orig_path).st_size
+            file_id = re.sub(r'[^a-zA-Z0-9]', '_', f"{fname}_{orig_size}")
+            thumb = self.get_ai_thumb(orig_path)
+            
+            # Requête Combo (Catégorie + Description) pour gagner 50% de temps
+            if self.rename_var.get():
+                prompt = (f"Return ONLY a JSON object with: 'cat' (choose ONE from {self.categories}) "
+                          f"and 'name' (5 words description for a filename, lowercase, no spaces).")
+            else:
+                prompt = f"Pick ONE category from {self.categories}. Reply with ONLY the category name."
+
+            response = self._ollama_generate(prompt, thumb)
+            
+            cat = 'unknown'
+            new_f = fname
+
+            # Parsing de la réponse
+            if "{" in response:
+                try:
+                    data = json.loads(re.search(r'\{.*\}', response, re.DOTALL).group())
+                    cat_raw = data.get('cat', '').lower()
+                    for c in self.categories:
+                        if c in cat_raw: cat = c; break
+                    
+                    if self.rename_var.get():
+                        clean_name = re.sub(r'[^a-z0-9_]', '', data.get('name', '').lower().replace(" ", "_"))
+                        if clean_name: new_f = f"{clean_name}{os.path.splitext(fname)[1]}"
+                except:
+                    pass
+            else:
+                for c in self.categories:
+                    if c in response.lower(): cat = c; break
+
+            # Gestion collision et déplacement
+            dest_dir_cat = os.path.join(final_dest, cat)
+            dest_path = os.path.join(dest_dir_cat, new_f)
+            
+            counter = 1
+            base_n, ext_n = os.path.splitext(new_f)
+            while os.path.exists(dest_path):
+                dest_path = os.path.join(dest_dir_cat, f"{base_n}_{counter}{ext_n}")
+                counter += 1
+
+            shutil.move(orig_path, dest_path)
+            
+            return file_id, {
+                "original_name": fname,
+                "current_path": dest_path,
+                "category": cat,
+                "ai_description": response.strip(),
+                "thumb_path": thumb,
+            }
         except Exception as e:
-            self.after(0, self._update_model_ui, [], str(e))
+            print(f"Error {fname}: {e}")
+            return None, None
 
-    def _update_model_ui(self, names, error):
-        self.btn_refresh.configure(state="normal")
-        if error or not names:
-            self.lbl_status.configure(text=f"Error or No models", text_color="red")
-            self.combo_models.configure(state="normal")
+    def run_sorting(self):
+        files = self.get_image_files()
+        if not files:
+            self.after(0, lambda: (self.lbl_status.configure(text="Aucun fichier"), self.btn_start.configure(state="normal")))
             return
-        self.combo_models.configure(values=names, state="normal")
-        selected = next((n for n in names if any(k in n.lower() for k in ["llava", "moondream", "qwen-vl"])), names[0])
-        self.model_var.set(selected)
-        self.lbl_status.configure(text=f"{len(names)} model(s) found", text_color="green")
 
-    # --- INTERFACE ET ACTIONS ---
+        self.after(0, lambda: self.lbl_status.configure(text="Initialisation du cache..."))
+        # Pré-génération rapide des miniatures
+        with ThreadPoolExecutor(max_workers=os.cpu_count()) as ex:
+            list(ex.map(self.get_ai_thumb, files))
+
+        final_dest = self.dest_dir if self.dest_dir else self.target_dir
+        for cat in self.categories + ['unknown']:
+            os.makedirs(os.path.join(final_dest, cat), exist_ok=True)
+
+        total = len(files)
+        # 3 workers = optimal pour GPU 8Go. Augmenter à 4 ou 5 si vous avez 12Go+ de VRAM.
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = [executor.submit(self.process_single_image, p, final_dest) for p in files]
+            
+            for i, future in enumerate(futures):
+                f_id, data = future.result()
+                if f_id: self.index_data[f_id] = data
+                
+                prog = (i + 1) / total
+                self.after(0, lambda v=prog, n=i+1: (
+                    self.progress.set(v),
+                    self.lbl_status.configure(text=f"Analyse IA Parallèle : {n} / {total}")
+                ))
+                if (i+1) % 10 == 0: self.save_index()
+
+        self.save_index()
+        self.after(0, lambda: (self.btn_start.configure(state="normal"), 
+                               self.lbl_status.configure(text="Tri terminé ✔", text_color="#2ecc71")))
+
+    # ─────────────────────────────────────────────────────────
+    # INTERFACE & UTILITAIRES (Inchangés mais intégrés)
+    # ─────────────────────────────────────────────────────────
+
     def setup_sort_tab(self):
-        self.rename_var = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(self.tab_sort, text="Smart rename via AI", variable=self.rename_var).pack(pady=10)
-        self.entry_frame = ctk.CTkFrame(self.tab_sort, fg_color="transparent")
-        self.entry_frame.pack(fill="x", padx=20, pady=5)
-        self.entry_cat = ctk.CTkEntry(self.entry_frame, placeholder_text="New category...")
-        self.entry_cat.pack(side="left", padx=5, fill="x", expand=True)
-        ctk.CTkButton(self.entry_frame, text="Add", width=80, command=self.add_category).pack(side="right")
-        
-        self.listbox_cats = ctk.CTkTextbox(self.tab_sort, height=180, cursor="hand2")
-        self.listbox_cats.pack(fill="both", expand=True, padx=20, pady=5)
-        
-        # Réactivation du double-clic
-        self.listbox_cats.bind("<Double-Button-1>", self.on_double_click)
-        
-        self.update_listbox()
-        self.btn_start = ctk.CTkButton(self.tab_sort, text="Start Sorting", fg_color="#2ecc71", command=self.start_sorting_thread)
-        self.btn_start.pack(pady=15)
+        self.rename_var = ctk.CTkCheckBox(self.tab_sort, text="Renommage intelligent (IA unique)")
+        self.rename_var.pack(pady=5)
+        f = ctk.CTkFrame(self.tab_sort, fg_color="transparent")
+        f.pack(fill="x", padx=20)
+        self.entry_cat = ctk.CTkEntry(f, placeholder_text="Ajouter une catégorie...")
+        self.entry_cat.pack(side="left", fill="x", expand=True, padx=5)
+        ctk.CTkButton(f, text="+", width=40, command=self.add_category).pack(side="right")
+        self.cat_scroll = ctk.CTkScrollableFrame(self.tab_sort, height=250)
+        self.cat_scroll.pack(fill="both", expand=True, padx=20, pady=10)
+        for col in range(5): self.cat_scroll.columnconfigure(col, weight=1)
+        self.update_category_chips()
+        self.btn_start = ctk.CTkButton(self.tab_sort, text="Démarrer le Tri IA (Multi-GPU)", fg_color="#2ecc71", command=self.start_sorting_thread)
+        self.btn_start.pack(pady=10)
 
-    def on_double_click(self, event):
-        try:
-            line_idx = self.listbox_cats.index(f"@{event.x},{event.y}").split('.')[0]
-            cat_name = self.listbox_cats.get(f"{line_idx}.0", f"{line_idx}.end").strip()
-            if cat_name in self.categories:
-                self.categories.remove(cat_name)
-                self.update_listbox()
-        except: pass
+    def start_sorting_thread(self):
+        if not self.target_dir:
+            messagebox.showwarning("Erreur", "Choisir source.")
+            return
+        self.btn_start.configure(state="disabled")
+        threading.Thread(target=self.run_sorting, daemon=True).start()
 
-    def update_listbox(self):
-        self.listbox_cats.configure(state="normal")
-        self.listbox_cats.delete("1.0", "end")
-        for cat in self.categories: self.listbox_cats.insert("end", f"{cat}\n")
-        self.listbox_cats.configure(state="disabled")
+    def update_category_chips(self):
+        for w in self.cat_scroll.winfo_children(): w.destroy()
+        r, c = 0, 0
+        for cat in self.categories:
+            chip = ctk.CTkFrame(self.cat_scroll, fg_color="#34495e", corner_radius=10)
+            chip.grid(row=r, column=c, padx=5, pady=5, sticky="ew")
+            ctk.CTkLabel(chip, text=cat, font=("Arial", 11)).pack(side="left", padx=5)
+            ctk.CTkButton(chip, text="×", width=15, height=15, fg_color="transparent", command=lambda n=cat: self.remove_category(n)).pack(side="right")
+            c += 1
+            if c > 4: c = 0; r += 1
 
     def add_category(self):
         cat = self.entry_cat.get().strip().lower()
         if cat and cat not in self.categories:
-            self.categories.append(cat); self.update_listbox(); self.entry_cat.delete(0, 'end')
+            self.categories.append(cat); self.update_category_chips(); self.entry_cat.delete(0, 'end')
 
-    def setup_search_tab(self):
-        f = ctk.CTkFrame(self.tab_search); f.pack(fill="x", padx=10, pady=10)
-        self.entry_query = ctk.CTkEntry(f, placeholder_text="Keywords...")
-        self.entry_query.pack(side="left", fill="x", expand=True, padx=5)
-        ctk.CTkButton(f, text="Search", width=80, command=self.run_search).pack(side="left", padx=2)
-        ctk.CTkButton(f, text="Index", width=80, command=self.start_indexing_thread).pack(side="left", padx=2)
-        self.search_scroll = ctk.CTkScrollableFrame(self.tab_search, label_text="Results")
-        self.search_scroll.pack(fill="both", expand=True, padx=10, pady=10)
-        self.search_scroll.columnconfigure((0,1,2,3), weight=1)
-
-    # --- PERSISTANCE INDEX ---
-    def load_index(self):
-        idx_path = os.path.join(self.target_dir, "image_index.json")
-        if os.path.exists(idx_path):
-            with open(idx_path, 'r', encoding='utf-8') as f: self.index_data = json.load(f)
-
-    def save_index(self):
-        if not self.target_dir: return
-        idx_path = os.path.join(self.target_dir, "image_index.json")
-        with open(idx_path, 'w', encoding='utf-8') as f: json.dump(self.index_data, f, indent=4)
-
-    # --- PROCESSUS INDEXATION ---
-    def start_indexing_thread(self):
-        if not self.target_dir: return
-        threading.Thread(target=self.run_indexing, daemon=True).start()
-
-    def run_indexing(self):
-        files = self.get_image_files()
-        self.pre_generate_all_thumbs(files)
-        
-        for i, p in enumerate(files):
-            f_name = os.path.basename(p)
-            if f_name not in self.index_data:
-                self.lbl_status.configure(text=f"AI Analysis: {f_name}")
-                thumb = self.get_ai_thumb(p)
-                try:
-                    res = ollama.generate(model=self.model_var.get(), prompt="Describe image in 10 words", images=[thumb])
-                    self.index_data[f_name] = res['response'].lower()
-                except: continue
-            self.progress.set((i+1)/len(files))
-        self.save_index()
-        self.lbl_status.configure(text="Indexing complete", text_color="green")
-
-    # --- PROCESSUS TRI ---
-    def start_sorting_thread(self):
-        if not self.target_dir: return
-        self.btn_start.configure(state="disabled")
-        threading.Thread(target=self.run_sorting, daemon=True).start()
-
-    def run_sorting(self):
-        final_dest = self.dest_dir if self.dest_dir else self.target_dir
-        for cat in self.categories + ['unknown']: os.makedirs(os.path.join(final_dest, cat), exist_ok=True)
-        
-        files = self.get_image_files()
-        self.pre_generate_all_thumbs(files)
-
-        for i, p in enumerate(files):
-            f_name = os.path.basename(p)
-            self.lbl_status.configure(text=f"Sorting: {f_name}")
-            thumb = self.get_ai_thumb(p)
-            
-            try:
-                # Classification
-                res = ollama.generate(model=self.model_var.get(), prompt=f"Pick ONE category: {self.categories}", images=[thumb])
-                cat = 'unknown'
-                for c in self.categories:
-                    if c in res['response'].lower(): cat = c; break
-                
-                # Renommage intelligent
-                new_f = f_name
-                if self.rename_var.get():
-                    r_res = ollama.generate(model=self.model_var.get(), prompt="5 words description no punctuation", images=[thumb])
-                    clean = re.sub(r'[^a-z0-9_]', '', r_res['response'].lower().replace(" ","_"))[:50]
-                    new_f = f"{clean}{os.path.splitext(f_name)[1]}"
-
-                shutil.move(p, os.path.join(final_dest, cat, new_f))
-            except: pass
-            self.progress.set((i+1)/len(files))
-        
-        self.btn_start.configure(state="normal")
-        self.lbl_status.configure(text="Sorting complete")
-
-    def run_search(self):
-        q = self.entry_query.get().lower()
-        for w in self.search_scroll.winfo_children(): w.destroy()
-        self.found_images = []
-        r, c = 0, 0
-        for f_name, desc in self.index_data.items():
-            if q in desc or q in f_name.lower():
-                files = self.get_image_files()
-                path = next((p for p in files if os.path.basename(p) == f_name), None)
-                if path:
-                    self.display_thumb(path, r, c)
-                    c += 1
-                    if c > 3: c = 0; r += 1
-
-    def display_thumb(self, path, r, c):
-        try:
-            f = ctk.CTkFrame(self.search_scroll)
-            f.grid(row=r, column=c, padx=5, pady=5)
-            img = Image.open(path); img.thumbnail((120, 120))
-            tk_img = ImageTk.PhotoImage(img)
-            l = ctk.CTkLabel(f, image=tk_img, text=""); l.image = tk_img; l.pack()
-            v = ctk.BooleanVar()
-            ctk.CTkCheckBox(f, text=os.path.basename(path)[:12], variable=v).pack()
-            self.found_images.append((path, v))
-        except: pass
+    def remove_category(self, name):
+        if name in self.categories: self.categories.remove(name); self.update_category_chips()
 
     def browse_source(self):
         p = filedialog.askdirectory()
-        if p: self.target_dir = p; self.lbl_status_source.configure(text=p); self.load_index()
+        if p: self.target_dir = p; self.lbl_status_source.configure(text=p)
 
     def browse_dest(self):
         p = filedialog.askdirectory()
         if p: self.dest_dir = p; self.lbl_status_dest.configure(text=p)
 
+    def setup_search_tab(self):
+        top_frame = ctk.CTkFrame(self.tab_search, fg_color="transparent")
+        top_frame.pack(fill="x", padx=20, pady=10)
+        self.search_entry = ctk.CTkEntry(top_frame, placeholder_text="Rechercher...", font=("Arial", 13))
+        self.search_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        ctk.CTkButton(top_frame, text="🔍", command=self.run_search, width=60).pack(side="right")
+        self.lbl_search_count = ctk.CTkLabel(self.tab_search, text="")
+        self.lbl_search_count.pack()
+        self.search_scroll = ctk.CTkScrollableFrame(self.tab_search)
+        self.search_scroll.pack(fill="both", expand=True, padx=10, pady=5)
+        for col in range(5): self.search_scroll.columnconfigure(col, weight=1)
+
+    def run_search(self):
+        query = self.search_entry.get().strip().lower()
+        for w in self.search_scroll.winfo_children(): w.destroy()
+        self._thumb_refs.clear()
+        results = [d for d in self.index_data.values() if query in str(d).lower()]
+        self.lbl_search_count.configure(text=f"{len(results)} résultat(s)")
+        COLS = 5
+        for idx, data in enumerate(results):
+            card = ctk.CTkFrame(self.search_scroll, fg_color="#2c3e50")
+            card.grid(row=idx//COLS, column=idx%COLS, padx=5, pady=5, sticky="nsew")
+            try:
+                img = Image.open(data.get("thumb_path")).resize((100, 100))
+                ph = ImageTk.PhotoImage(img); self._thumb_refs.append(ph)
+                ctk.CTkLabel(card, image=ph, text="").pack()
+            except: pass
+            ctk.CTkLabel(card, text=data.get("category"), font=("Arial", 9, "bold")).pack()
+            ctk.CTkButton(card, text="📂", width=30, command=lambda p=data.get("current_path"): self.reveal_file(p)).pack()
+
+    def reveal_file(self, path):
+        if sys.platform == "win32": subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+        else: subprocess.Popen(["open", "-R", path] if sys.platform == "darwin" else ["xdg-open", os.path.dirname(path)])
+
+    def get_image_files(self):
+        exts = ('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif')
+        file_list = []
+        if not self.target_dir: return []
+        for root, _, files in os.walk(self.target_dir):
+            if "ai_cache_thumbnails" in root: continue
+            for f in files:
+                if f.lower().endswith(exts): file_list.append(os.path.join(root, f))
+            if not self.recursive_var.get(): break
+        return file_list
+
+    def load_index(self):
+        if os.path.exists(self.index_path):
+            try:
+                with open(self.index_path, 'r', encoding='utf-8') as f: self.index_data = json.load(f)
+            except: self.index_data = {}
+
+    def save_index(self):
+        try:
+            with open(self.index_path, 'w', encoding='utf-8') as f: json.dump(self.index_data, f, indent=4, ensure_ascii=False)
+        except: pass
+
+    def refresh_models_thread(self):
+        threading.Thread(target=self._fetch_models, daemon=True).start()
+
+    def _fetch_models(self):
+        try:
+            m = ollama.list()
+            names = [getattr(model, 'model', None) or getattr(model, 'name', None) for model in m.models] if hasattr(m, 'models') else [x.get('name') for x in m.get('models', [])]
+            self.after(0, lambda: self.combo_models.configure(values=names, state="normal"))
+            if names: self.after(0, lambda: self.model_var.set(names[0]))
+        except:
+            self.after(0, lambda: self.model_var.set("Ollama non détecté"))
+
+    def clear_cache(self):
+        if messagebox.askyesno("Cache", "Vider les miniatures ?"):
+            shutil.rmtree(self.global_cache_dir, ignore_errors=True)
+            os.makedirs(self.global_cache_dir, exist_ok=True)
+
 if __name__ == "__main__":
     app = ImageSorterApp()
     app.mainloop()
+
