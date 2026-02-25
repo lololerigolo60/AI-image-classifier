@@ -1,6 +1,6 @@
 INSTALLATION
 For Windows
-You must have Python installed.
+You must have Python installed and ollama. With Ollama, load a vision model: I use Ministral3:3b, which is lightweight and efficient.
 Unzip the archive wherever you want.
 Run the run.bat file:
 Open the console in the directory where you unzipped the file and type
