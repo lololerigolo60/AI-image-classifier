@@ -1,5 +1,27 @@
 # **User Guide: AI Image Classifier**
 
+update 02/25/26
+Performance Optimizations
+
+    Multi-Threaded Parallelization: The script now uses a ThreadPoolExecutor with 3 simultaneous "workers". This allows sending three images to Ollama at the same time, fully leveraging your graphics card's parallel processing power instead of processing files one by one.
+
+    "Combo" AI Request (JSON): Instead of calling the AI twice per image (once for category, once for description), the system sends a single instruction requesting a JSON object containing both pieces of information. This cuts the latency related to network/model calls in half.
+
+    Optimized Thumbnail Format: Thumbnail size has been reduced from 384x384 to 224x224 pixels. This is the native standard for most Vision models (like Moondream), which speeds up file creation and reduces VRAM consumption during analysis.
+
+🛠 Internal Logic Improvements
+
+    Massive Pre-Caching: At the start of the sorting process, the script uses all available CPU cores to generate thumbnails before the AI even begins its work. This ensures the AI never has to wait for file preparation.
+
+    Robust Renaming Logic: The renaming process now includes automatic special character cleaning (regex) and collision management by adding counters (e.g., _1, _2) to prevent overwriting existing files.
+
+    Real-Time Indexing: The global_image_index.json is saved every 10 processed images, ensuring you don't lose data if the process is accidentally interrupted.
+
+🖥 Interface & Usability
+
+    Improved Visual Feedback: The progress bar and status text now clearly display "Parallel AI Analysis" and the exact count of images being processed in real-time.
+
+    Cache Protection: A safety feature was added to automatically ignore the ai_cache_thumbnails folder during source directory scanning, preventing the AI from trying to classify its own thumbnails.
 update 02/24/26 
 The core processing engine has been upgraded to handle large image libraries significantly faster using two main strategies:
 1. Multi-threaded Image Proxying
