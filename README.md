@@ -5,6 +5,8 @@ Unzip the archive wherever you want.
 Run the run.bat file:
 Open the console in the directory where you unzipped the file and type
 “./run.bat”
+it creates a virtual environment if necessary and install the missing libraries
+
 
 # **User Guide: AI Image Classifier**
 
