@@ -1,5 +1,5 @@
 INSTALLATION
-
+For Windows
 You must have Python installed.
 Unzip the archive wherever you want.
 Run the run.bat file:
