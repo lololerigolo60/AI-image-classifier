@@ -29,7 +29,8 @@ class ImageSorterApp(ctk.CTk):
         self.selected_files = set() 
         self.current_search_vars = {}
         
-        # --- Variables de Pagination ---
+        # --- Variables de Taille et Pagination ---
+        self.thumb_size = 150 
         self.current_page = 0
         self.results_per_page = 50
         self.all_search_results = []
@@ -192,21 +193,33 @@ class ImageSorterApp(ctk.CTk):
         self.search_entry.bind("<Return>", lambda e: self.run_search())
         ctk.CTkButton(top_frame, text="🔍", command=self.run_search, width=50).pack(side="left", padx=2)
         
-        # Le bouton "Tout" agit maintenant comme un Toggle
         self.btn_toggle_all = ctk.CTkButton(top_frame, text="✅ Tout", command=self.select_all_search, width=60, fg_color="#34495e")
         self.btn_toggle_all.pack(side="left", padx=2)
+
+        size_frame = ctk.CTkFrame(self.tab_search, fg_color="transparent")
+        size_frame.pack(fill="x", padx=20, pady=0)
+        ctk.CTkLabel(size_frame, text="Taille miniatures :", font=("Arial", 11)).pack(side="left", padx=5)
+        self.size_slider = ctk.CTkSlider(size_frame, from_=80, to=400, number_of_steps=10, command=self.update_thumb_size)
+        self.size_slider.set(self.thumb_size)
+        self.size_slider.pack(side="left", padx=5)
 
         self.action_frame = ctk.CTkFrame(self.tab_search, height=40)
         self.action_frame.pack(fill="x", padx=20, pady=5)
         self.lbl_select_count = ctk.CTkLabel(self.action_frame, text="0 sélectionné(s)")
         self.lbl_select_count.pack(side="left", padx=10)
         
-        ctk.CTkButton(self.action_frame, text="Copier vers...", command=lambda: self.bulk_action("copy"), fg_color="#3498db", width=120).pack(side="right", padx=5)
+        # Boutons d'actions groupées
+        ctk.CTkButton(self.action_frame, text="Supprimer", command=self.bulk_delete, fg_color="#c0392b", width=100).pack(side="right", padx=5)
         ctk.CTkButton(self.action_frame, text="Déplacer vers...", command=lambda: self.bulk_action("move"), fg_color="#e67e22", width=120).pack(side="right", padx=5)
+        ctk.CTkButton(self.action_frame, text="Copier vers...", command=lambda: self.bulk_action("copy"), fg_color="#3498db", width=120).pack(side="right", padx=5)
 
         self.search_scroll = ctk.CTkScrollableFrame(self.tab_search)
         self.search_scroll.pack(fill="both", expand=True, padx=10, pady=5)
-        for col in range(5): self.search_scroll.columnconfigure(col, weight=1)
+
+    def update_thumb_size(self, value):
+        self.thumb_size = int(value)
+        if self.all_search_results:
+            self.display_page()
 
     def run_search(self):
         query_text = self.search_entry.get().strip().lower()
@@ -241,44 +254,52 @@ class ImageSorterApp(ctk.CTk):
         end = start + self.results_per_page
         page_items = self.all_search_results[start:end]
 
+        # --- Barre de Pagination ---
         ctrl_frame = ctk.CTkFrame(self.search_scroll, fg_color="transparent")
-        ctrl_frame.grid(row=0, column=0, columnspan=5, pady=10)
+        ctrl_frame.pack(fill="x", pady=10)
 
         ctk.CTkButton(ctrl_frame, text="<", width=40, state="normal" if self.current_page > 0 else "disabled", 
                       command=self.prev_page).pack(side="left", padx=5)
-
         ctk.CTkLabel(ctrl_frame, text="Page").pack(side="left", padx=2)
+        
         self.page_input = ctk.CTkEntry(ctrl_frame, width=45)
         self.page_input.insert(0, str(self.current_page + 1))
         self.page_input.pack(side="left", padx=2)
-        self.page_input.bind("<Return>", lambda e: self.go_to_page())
+        self.page_input.bind("<Return>", lambda e: self.go_to_page()) # FIX: Touche Entrée active
         
         ctk.CTkLabel(ctrl_frame, text=f"/ {total_pages} ({total_items} images)").pack(side="left", padx=5)
-
         ctk.CTkButton(ctrl_frame, text=">", width=40, state="normal" if end < total_items else "disabled", 
                       command=self.next_page).pack(side="left", padx=5)
 
-        COLS = 5
+        # --- Grille d'images Dynamique ---
+        grid_container = ctk.CTkFrame(self.search_scroll, fg_color="transparent")
+        grid_container.pack(fill="both", expand=True)
+
+        available_width = self.winfo_width() - 80
+        cols = max(1, available_width // (self.thumb_size + 20))
+        for col in range(cols): grid_container.columnconfigure(col, weight=1)
+
         for idx, data in enumerate(page_items):
             path = data.get("current_path")
             if not path or not os.path.exists(path): continue
             
-            card = ctk.CTkFrame(self.search_scroll, fg_color="#2c3e50")
-            card.grid(row=(idx // COLS) + 1, column=idx % COLS, padx=5, pady=5, sticky="nsew")
+            card = ctk.CTkFrame(grid_container, fg_color="#2c3e50")
+            card.grid(row=idx // cols, column=idx % cols, padx=5, pady=5, sticky="nsew")
             
-            # État de la checkbox basé sur l'ensemble global de sélection
             var = ctk.BooleanVar(value=path in self.selected_files)
             self.current_search_vars[path] = var
             ctk.CTkCheckBox(card, text="", variable=var, width=20, command=lambda p=path, v=var: self.toggle_selection(p, v)).pack(anchor="ne", padx=5)
 
             try:
-                img = Image.open(data.get("thumb_path")).resize((120, 120))
+                img = Image.open(data.get("thumb_path"))
+                img.thumbnail((self.thumb_size, self.thumb_size), Image.Resampling.LANCZOS)
                 ph = ImageTk.PhotoImage(img)
                 self._thumb_refs.append(ph)
-                ctk.CTkLabel(card, image=ph, text="").pack()
+                ctk.CTkLabel(card, image=ph, text="").pack(pady=2)
             except: ctk.CTkLabel(card, text="Erreur Image").pack()
             
-            ctk.CTkLabel(card, text=data.get("category"), font=("Arial", 9, "bold")).pack()
+            if self.thumb_size > 100:
+                ctk.CTkLabel(card, text=data.get("category"), font=("Arial", 9, "bold")).pack()
             ctk.CTkButton(card, text="📂", width=30, command=lambda p=path: self.reveal_file(p)).pack(pady=2)
 
     def next_page(self):
@@ -307,20 +328,15 @@ class ImageSorterApp(ctk.CTk):
         self.lbl_select_count.configure(text=f"{len(self.selected_files)} sélectionné(s)")
 
     def select_all_search(self):
-        # On vérifie s'il y a des éléments affichés qui ne sont PAS sélectionnés
         any_unselected = any(not var.get() for var in self.current_search_vars.values())
-        
         if any_unselected:
-            # S'il y a au moins un élément non coché, on coche tout
             for path, var in self.current_search_vars.items():
                 var.set(True)
                 self.selected_files.add(path)
         else:
-            # Si tout est déjà coché, on décoche tout ce qui est affiché
             for path, var in self.current_search_vars.items():
                 var.set(False)
                 self.selected_files.discard(path)
-                
         self.lbl_select_count.configure(text=f"{len(self.selected_files)} sélectionné(s)")
 
     def bulk_action(self, mode):
@@ -329,7 +345,9 @@ class ImageSorterApp(ctk.CTk):
         if not target: return
         
         success = 0
-        for path in list(self.selected_files):
+        files_to_process = list(self.selected_files)
+        
+        for path in files_to_process:
             try:
                 dest = os.path.join(target, os.path.basename(path))
                 if mode == "copy": shutil.copy2(path, dest)
@@ -337,12 +355,37 @@ class ImageSorterApp(ctk.CTk):
                     shutil.move(path, dest)
                     for k, v in self.index_data.items():
                         if v.get("current_path") == path: self.index_data[k]["current_path"] = dest
-                    self.selected_files.remove(path)
                 success += 1
             except: pass
+            
+        self.selected_files.clear() # FIX: Désélection après action
         self.save_index()
         messagebox.showinfo("OK", f"{success} fichiers traités.")
+        self.lbl_select_count.configure(text="0 sélectionné(s)")
+        
         if mode == "move": self.run_search()
+        else: self.display_page()
+
+    def bulk_delete(self):
+        if not self.selected_files: return
+        if not messagebox.askyesno("Confirmation", f"Supprimer définitivement {len(self.selected_files)} fichiers ?"): return
+        
+        success = 0
+        for path in list(self.selected_files):
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+                    # Supprimer de l'index
+                    to_del = [k for k, v in self.index_data.items() if v.get("current_path") == path]
+                    for k in to_del: del self.index_data[k]
+                    success += 1
+            except: pass
+            
+        self.selected_files.clear()
+        self.save_index()
+        messagebox.showinfo("OK", f"{success} fichiers supprimés.")
+        self.lbl_select_count.configure(text="0 sélectionné(s)")
+        self.run_search()
 
     def setup_sort_tab(self):
         self.rename_var = ctk.CTkCheckBox(self.tab_sort, text="Renommage intelligent (IA unique)")
@@ -432,4 +475,5 @@ class ImageSorterApp(ctk.CTk):
 if __name__ == "__main__":
     app = ImageSorterApp()
     app.mainloop()
+
 
