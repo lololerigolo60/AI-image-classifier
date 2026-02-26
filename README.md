@@ -1,4 +1,4 @@
-INSTALLATION
+**INSTALLATION**
 For Windows
 You must have Python installed and ollama. With Ollama, load a vision model: I use Ministral3:3b, which is lightweight and efficient.
 Unzip the archive wherever you want.
@@ -8,8 +8,28 @@ Open the console in the directory where you unzipped the file and type
 it creates a virtual environment if necessary and install the missing libraries
 
 
-# **User Guide: AI Image Classifier**
+update 02/26/26
+Multi-keyword Search Support:
 
+    Refactored the search engine to support multiple keywords separated by spaces.
+
+    Implemented an all() condition logic: the application now filters and displays images only if all entered terms are found within the image metadata (category, AI description, or filename).
+
+    Improved search flexibility, allowing for more precise filtering (e.g., searching "black cat" will only show images containing both "black" and "cat").
+
+Smart Global Selection (Toggle All):
+
+    Upgraded the "Select All" functionality into a smart toggle.
+
+    Logic: If any displayed image is unselected, clicking "Select All" will check all visible items. If all visible items are already selected, clicking it again will deselect them all.
+
+    Integrated real-time synchronization between the UI checkboxes and the global selection set (selected_files).
+
+UI/UX Improvements:
+
+    The selection counter now updates instantly when using the toggle or manual checkboxes.
+
+    Maintained existing pagination and AI processing features without breaking core functionality.
 update 02/25/26
 Performance Optimizations
 
@@ -51,7 +71,7 @@ A hidden directory (.cache_ai) is now created within your source folder.
     Manual Control: A "Clear AI Cache" button has been added to the UI to safely delete these temporary files once your sorting is finalized.
 
 
-    
+ # **User Guide: AI Image Classifier**   
 
 ## **Overview**
 
