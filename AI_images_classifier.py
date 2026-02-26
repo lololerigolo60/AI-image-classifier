@@ -118,7 +118,6 @@ class ImageSorterApp(ctk.CTk):
             file_id = re.sub(r'[^a-zA-Z0-9]', '_', f"{fname}_{orig_size}")
             thumb = self.get_ai_thumb(orig_path)
             
-            # --- MODIFICATION DU PROMPT POUR DESCRIPTION PRÉCISE ---
             prompt = (
                 f"Analyze this image and return ONLY a JSON object with these fields:\n"
                 f"1. 'cat': Pick ONE category from {self.categories}.\n"
@@ -137,7 +136,6 @@ class ImageSorterApp(ctk.CTk):
                     for c in self.categories:
                         if c in cat_raw: cat = c; break
                     
-                    # Récupération de la description structurée
                     if 'desc' in data:
                         detailed_desc = data['desc']
                     
@@ -158,7 +156,6 @@ class ImageSorterApp(ctk.CTk):
                 counter += 1
 
             shutil.move(orig_path, dest_path)
-            # Enregistrement de la description enrichie dans l'index
             return file_id, {"original_name": fname, "current_path": dest_path, "category": cat, "ai_description": detailed_desc, "thumb_path": thumb}
         except: return None, None
 
@@ -194,7 +191,10 @@ class ImageSorterApp(ctk.CTk):
         self.search_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
         self.search_entry.bind("<Return>", lambda e: self.run_search())
         ctk.CTkButton(top_frame, text="🔍", command=self.run_search, width=50).pack(side="left", padx=2)
-        ctk.CTkButton(top_frame, text="✅ Tout", command=self.select_all_search, width=60, fg_color="#34495e").pack(side="left", padx=2)
+        
+        # Le bouton "Tout" agit maintenant comme un Toggle
+        self.btn_toggle_all = ctk.CTkButton(top_frame, text="✅ Tout", command=self.select_all_search, width=60, fg_color="#34495e")
+        self.btn_toggle_all.pack(side="left", padx=2)
 
         self.action_frame = ctk.CTkFrame(self.tab_search, height=40)
         self.action_frame.pack(fill="x", padx=20, pady=5)
@@ -209,8 +209,18 @@ class ImageSorterApp(ctk.CTk):
         for col in range(5): self.search_scroll.columnconfigure(col, weight=1)
 
     def run_search(self):
-        query = self.search_entry.get().strip().lower()
-        self.all_search_results = [d for d in self.index_data.values() if query in str(d).lower()]
+        query_text = self.search_entry.get().strip().lower()
+        search_terms = query_text.split()
+        
+        if not search_terms:
+            self.all_search_results = list(self.index_data.values())
+        else:
+            self.all_search_results = []
+            for d in self.index_data.values():
+                content = str(d).lower()
+                if all(term in content for term in search_terms):
+                    self.all_search_results.append(d)
+        
         self.current_page = 0
         self.display_page()
 
@@ -256,6 +266,7 @@ class ImageSorterApp(ctk.CTk):
             card = ctk.CTkFrame(self.search_scroll, fg_color="#2c3e50")
             card.grid(row=(idx // COLS) + 1, column=idx % COLS, padx=5, pady=5, sticky="nsew")
             
+            # État de la checkbox basé sur l'ensemble global de sélection
             var = ctk.BooleanVar(value=path in self.selected_files)
             self.current_search_vars[path] = var
             ctk.CTkCheckBox(card, text="", variable=var, width=20, command=lambda p=path, v=var: self.toggle_selection(p, v)).pack(anchor="ne", padx=5)
@@ -296,9 +307,20 @@ class ImageSorterApp(ctk.CTk):
         self.lbl_select_count.configure(text=f"{len(self.selected_files)} sélectionné(s)")
 
     def select_all_search(self):
-        for path, var in self.current_search_vars.items():
-            var.set(True)
-            self.selected_files.add(path)
+        # On vérifie s'il y a des éléments affichés qui ne sont PAS sélectionnés
+        any_unselected = any(not var.get() for var in self.current_search_vars.values())
+        
+        if any_unselected:
+            # S'il y a au moins un élément non coché, on coche tout
+            for path, var in self.current_search_vars.items():
+                var.set(True)
+                self.selected_files.add(path)
+        else:
+            # Si tout est déjà coché, on décoche tout ce qui est affiché
+            for path, var in self.current_search_vars.items():
+                var.set(False)
+                self.selected_files.discard(path)
+                
         self.lbl_select_count.configure(text=f"{len(self.selected_files)} sélectionné(s)")
 
     def bulk_action(self, mode):
@@ -410,3 +432,4 @@ class ImageSorterApp(ctk.CTk):
 if __name__ == "__main__":
     app = ImageSorterApp()
     app.mainloop()
+
