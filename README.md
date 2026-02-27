@@ -7,6 +7,17 @@ Open the console in the directory where you unzipped the file and type
 “./run.bat”
 it creates a virtual environment if necessary and install the missing libraries
 
+update 02/27/26
+
+Major overhaul of data management and user interface:
+
+- Database: Replacement of JSON indexing with an SQLite database (image_index.db) for better performance and data integrity.
+- UI: Addition of a preview window (Toplevel) to display the image in large format and detailed metadata.
+- AI: Added the ability to regenerate an individual image directly from the preview.
+- UX: Improved pagination with direct page number entry and interactive cursor on thumbnails.
+- Robustness: Optimized Ollama prompt and strengthened error handling when moving files.
+- Cleanup: Removed manual loading/saving of the JSON file, which has become obsolete.
+
 
 update 02/26/26
 Multi-keyword Search Support:
